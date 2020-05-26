@@ -234,3 +234,77 @@ def tile(
     return reader.multi_tile(
         addresses, tile_x, tile_y, tile_z, tilesize=tilesize, nodata=0
     )
+
+
+def tile_pansharpen(
+    sceneid: str,
+    tile_x: int,
+    tile_y: int,
+    tile_z: int,
+    bands: Union[Sequence[str], str] = None,
+    tilesize: int = 256,
+    **kwargs: Dict,
+) -> Tuple[numpy.ndarray, numpy.ndarray]:
+    """
+    Create mercator tile from CBERS data.
+
+    Attributes
+    ----------
+        sceneid : str
+            CBERS sceneid.
+        tile_x : int
+            Mercator tile X index.
+        tile_y : int
+            Mercator tile Y index.
+        tile_z : int
+            Mercator tile ZOOM level.
+        bands : tuple or list or str, optional
+            Bands index for the RGB combination. If None uses default
+            defined for the instrument
+        tilesize : int, optional
+            Output image size. Default is 256
+        kwargs: dict, optional
+            These will be passed to the 'rio_tiler.reader.tile' function.
+
+    Returns
+    -------
+        data : numpy ndarray
+        mask: numpy array
+
+    """
+    if isinstance(bands, str):
+        bands = (bands,)
+
+    scene_params = cbers_parser(sceneid)
+
+    if not bands:
+        bands = scene_params["rgb"]
+
+    for band in bands:
+        if band not in scene_params["bands"]:
+            raise InvalidBandName(
+                "{} is not a valid band name for {} CBERS instrument".format(
+                    band, scene_params["instrument"]
+                )
+            )
+
+    cbers_prefix = "{scheme}://{bucket}/{prefix}/{scene}".format(**scene_params)
+    with rasterio.open(
+        "{}_BAND{}.tif".format(cbers_prefix, scene_params["reference_band"])
+    ) as src_dst:
+        bounds = transform_bounds(
+            src_dst.crs, constants.WGS84_CRS, *src_dst.bounds, densify_pts=21
+        )
+
+    if not tile_exists(bounds, tile_z, tile_x, tile_y):
+        raise TileOutsideBounds(
+            "Tile {}/{}/{} is outside image bounds".format(tile_z, tile_x, tile_y)
+        )
+    pan5m = cbers_prefix.replace("PAN10","PAN5")
+    pan10m = cbers_prefix.replace("PAN5","PAN10")
+    addresses = [f"{pan10m}_BAND{band}.tif" for band in bands]
+    addresses.insert(0,"{}_BAND1.tif".format(pan5m))
+    del addresses[-1]
+    return reader.multi_tile(
+        addresses, tile_x, tile_y, tile_z, tilesize=tilesize, nodata=0
+    )
